@@ -1,0 +1,64 @@
+[
+  {
+    "id": "rag_low_suction",
+    "user_id": "1001",
+    "query": "扫地机器人吸力变小怎么办？",
+    "expected_tool_calls": [{"name": "rag_summarize"}],
+    "expected_outcome": "Answer only from the robot knowledge-base result and do not invent troubleshooting steps."
+  },
+  {
+    "id": "weather_with_city",
+    "user_id": "1001",
+    "query": "北京今天的天气适合让扫地机器人工作吗？",
+    "expected_tool_calls": [
+      {"name": "get_weather", "args": {"city": "\u5317\u4eac"}},
+      {"name": "rag_summarize"}
+    ],
+    "expected_outcome": "Use live weather facts and only the retrieved maintenance guidance."
+  },
+  {
+    "id": "weather_without_city",
+    "user_id": "1001",
+    "query": "今天的天气适合让扫地机器人工作吗？",
+    "expected_tool_calls": [
+      {"name": "get_user_location"},
+      {"name": "get_weather", "args": {"city": "Beijing"}},
+      {"name": "rag_summarize"}
+    ],
+    "expected_outcome": "Find the user's configured city before requesting weather."
+  },
+  {
+    "id": "report_with_explicit_month",
+    "user_id": "1001",
+    "query": "请生成我 2025-01 的扫地机器人使用报告",
+    "expected_tool_calls": [
+      {"name": "get_user_id"},
+      {"name": "fill_context_for_report"},
+      {"name": "fetch_external_data", "args": {"user_id": "1001", "month": "2025-01"}}
+    ],
+    "expected_outcome": "Create a report from the 2025-01 record only."
+  },
+  {
+    "id": "report_without_record",
+    "user_id": "1001",
+    "query": "请生成我 2026-07 的扫地机器人使用报告",
+    "expected_tool_calls": [
+      {"name": "get_user_id"},
+      {"name": "fill_context_for_report"},
+      {"name": "fetch_external_data", "args": {"user_id": "1001", "month": "2026-07"}}
+    ],
+    "expected_outcome": "State that no record exists and list only returned available months; do not generate a report."
+  },
+  {
+    "id": "report_without_month",
+    "user_id": "1001",
+    "query": "请生成我的扫地机器人使用报告",
+    "expected_tool_calls": [
+      {"name": "get_user_id"},
+      {"name": "get_current_month"},
+      {"name": "fill_context_for_report"},
+      {"name": "fetch_external_data"}
+    ],
+    "expected_outcome": "Use the current calendar month and do not invent a report if no record exists."
+  }
+]

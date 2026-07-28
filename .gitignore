@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.idea/
+.claude/
+
+# Local runtime artifacts
+logs/
+chroma_db/
+evals/results/
+
+# Local secrets
+.env
+.env.*
+!.env.example
