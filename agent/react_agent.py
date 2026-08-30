@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from langchain_core.messages import SystemMessage
+from agent.message_output import visible_assistant_text
 from model.factory import chat_model
 from utils.prompt_loader import load_system_prompts, load_report_prompts
 from utils.logger_handler import logger
@@ -50,6 +51,7 @@ class ReactAgent:
     def execute_stream(self,query:str,thread_id:str="default",context:dict=None):
         global _report_mode
         _report_mode = False
+        emitted_messages: set[tuple[str, str]] = set()
         config = {"configurable":{"thread_id":thread_id}}
         input_dict = {
             "messages":[
@@ -59,8 +61,14 @@ class ReactAgent:
 
         for chunk in self.agent.stream(input_dict,config=config,stream_mode="values"):
             latest_message = chunk["messages"][-1]
-            if hasattr(latest_message, "content") and latest_message.content:
-                yield latest_message.content.strip() + '\n'
+            response_text = visible_assistant_text(latest_message)
+            if not response_text:
+                continue
+            message_key = (str(getattr(latest_message, "id", "")), response_text)
+            if message_key in emitted_messages:
+                continue
+            emitted_messages.add(message_key)
+            yield response_text + '\n'
 
     def execute_with_trace(
         self, query: str, thread_id: str = "evaluation", context: Optional[dict] = None
