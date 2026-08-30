@@ -26,6 +26,8 @@ model and has no paid-model fallback.
 - Chat: `qwen3.7-flash-2026-07-15`
 - Embedding: `qwen3.7-text-embedding`
 - Credential: one shared `DASHSCOPE_API_KEY`
+- Chat protocol: Bailian's OpenAI-compatible multimodal endpoint
+- Embedding integration: `DashScopeEmbeddings`
 
 Keep "stop when free quota is exhausted" enabled for both models. When Bailian
 returns `403 AllocationQuota.FreeTierOnly`, the UI shows a quota-exhausted
@@ -33,10 +35,11 @@ message and stops the request.
 
 ## Windows 10 setup
 
-Python 3.11 is recommended. In PowerShell:
+Python 3.10 or newer is supported. The example below uses Python 3.10 in
+PowerShell:
 
 ```powershell
-py -3.11 -m venv .venv
+py -3.10 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
@@ -45,6 +48,10 @@ python -m pip install -r requirements.txt
 Use the `DASHSCOPE_API_KEY` already configured in Windows, or copy
 `.env.example` to `.env` and replace the placeholder locally. Never commit the
 real key.
+
+The default chat endpoint is the mainland China endpoint. If the API Key belongs
+to another Bailian region, set `DASHSCOPE_BASE_URL` to that region's
+OpenAI-compatible `/compatible-mode/v1` endpoint as well.
 
 Run three small live checks for chat, text embeddings, and tool calling:
 
