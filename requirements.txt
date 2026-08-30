@@ -1,0 +1,13 @@
+streamlit==1.62.0
+langgraph==1.2.11
+langchain-core==1.6.1
+langchain-community==0.4.2
+langchain-chroma==1.1.0
+langchain-text-splitters==1.1.2
+chromadb==1.5.9
+dashscope==1.27.2
+rank-bm25==0.2.2
+pypdf>=6.0,<7
+PyYAML>=6.0,<7
+requests>=2.32,<3
+python-dotenv>=1.1,<2
