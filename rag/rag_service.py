@@ -63,6 +63,12 @@ class RagSummerizeService(object):
     def rag_summarize(self, query: str)-> str:
         context_docs = self.retriever_docs(query)
 
+        if not context_docs:
+            return (
+                "本地知识库尚未初始化。请先运行 "
+                "python -m rag.rebuild_index --yes，再重试知识库问题。"
+            )
+
         context = ""
         counter = 1
         for doc in context_docs:

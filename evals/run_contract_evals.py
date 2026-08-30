@@ -7,10 +7,10 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Tuple
 
-from agent.react_agent import ReactAgent
-from agent.tools.agent_tools import set_current_user_id
+if TYPE_CHECKING:
+    from agent.react_agent import ReactAgent
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -108,7 +108,9 @@ def tool_call_scores(
     }
 
 
-def run_case(agent: ReactAgent, case: Dict[str, Any]) -> Dict[str, Any]:
+def run_case(agent: "ReactAgent", case: Dict[str, Any]) -> Dict[str, Any]:
+    from agent.tools.agent_tools import set_current_user_id
+
     set_current_user_id(str(case["user_id"]))
     execution = agent.execute_with_trace(
         case["query"], thread_id=f"eval-{case['id']}-{datetime.now().timestamp()}"
@@ -178,6 +180,8 @@ def main() -> int:
     if args.dry_run:
         print(f"Validated {len(cases)} evaluation cases. No model call was made.")
         return 0
+
+    from agent.react_agent import ReactAgent
 
     agent = ReactAgent()
     results = [run_case(agent, case) for case in cases]
