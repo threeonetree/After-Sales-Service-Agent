@@ -24,6 +24,7 @@ from utils.path_tool import get_abs_path, get_project_root
 
 
 MANIFEST_VERSION = 1
+EMBEDDING_BATCH_SIZE = 20
 
 
 class VectorIndexError(RuntimeError):
@@ -114,6 +115,20 @@ class VectorStoreService:
     def _source_key(file_path: str) -> str:
         return os.path.relpath(file_path, get_project_root()).replace(os.sep, "/")
 
+    def _add_documents_in_batches(self, documents: list[Document]) -> list[str]:
+        """Embed documents within Bailian's per-request batch limit."""
+        document_ids: list[str] = []
+        try:
+            for start in range(0, len(documents), EMBEDDING_BATCH_SIZE):
+                batch = documents[start : start + EMBEDDING_BATCH_SIZE]
+                document_ids.extend(self.vector_store.add_documents(batch))
+        except Exception:
+            # Prevent an interrupted file from leaving untracked vectors behind.
+            if document_ids:
+                self.vector_store.delete(ids=document_ids)
+            raise
+        return document_ids
+
     def load_document(self) -> dict[str, int]:
         """Synchronize knowledge files into Chroma and return operation counts."""
         self.assert_index_compatible()
@@ -159,9 +174,9 @@ class VectorStoreService:
                     continue
 
                 old_ids = old_entry.get("document_ids", [])
+                document_ids = self._add_documents_in_batches(split_documents)
                 if old_ids:
                     self.vector_store.delete(ids=old_ids)
-                document_ids = self.vector_store.add_documents(split_documents)
                 indexed_files[source_key] = {
                     "md5": md5_hex,
                     "document_ids": document_ids,
