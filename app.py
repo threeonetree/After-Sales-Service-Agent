@@ -1,5 +1,4 @@
 import streamlit as st
-import time
 import uuid
 
 from utils.model_errors import user_facing_model_error
@@ -33,6 +32,10 @@ if "thread_id" not in st.session_state:
 with st.sidebar:
     st.subheader("用户设置")
     selected_user = st.selectbox("选择用户ID", user_ids)
+    if st.session_state.get("selected_user") != selected_user:
+        st.session_state["selected_user"] = selected_user
+        st.session_state["thread_id"] = str(uuid.uuid4())
+        st.session_state["message"] = []
     if st.button("新对话"):
         st.session_state["thread_id"] = str(uuid.uuid4())
         st.session_state["message"] = []
@@ -57,17 +60,14 @@ if prompt:
             res_stream = st.session_state["agent"].execute_stream(
                 prompt,
                 thread_id=st.session_state["thread_id"],
-                context={"report":False,"user_id":selected_user}
+                context={"user_id":selected_user}
             )
 
             def capture(generator,cache_list):
                 for chunk in generator:
                     cache_list.append(chunk)
 
-                    #输出更加“流式”
-                    for char in chunk:
-                        time.sleep(0.01)
-                        yield char
+                    yield chunk
 
             st.chat_message("assistant").write_stream(capture(res_stream,response_messages))
             st.session_state["message"].append(

@@ -1,109 +1,147 @@
+"""Agent entry points with deterministic personal-data routing."""
+
+from dataclasses import dataclass
+import json
+from typing import Any
+from uuid import uuid4
+
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
-from dataclasses import dataclass
-from typing import Any, Optional
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from langchain_core.messages import SystemMessage
 from agent.message_output import visible_assistant_text
+from agent.personal_data_route import route_personal_data_request
+from agent.report_prompt_state import report_mode_active
 from model.factory import chat_model
 from utils.prompt_loader import load_system_prompts, load_report_prompts
-from utils.logger_handler import logger
-from agent.tools.agent_tools import (rag_summarize,get_weather,get_user_id,get_user_location,
-                                get_current_month,fetch_external_data,fill_context_for_report)
-
-# 报告模式标记（替代原 middleware 的 dynamic_prompt 切换）
-_report_mode = False
+from agent.tools.agent_tools import (
+    current_user_id,
+    execution_context,
+    fetch_external_data,
+    fill_context_for_report,
+    get_user_id,
+    get_user_location,
+    get_weather,
+    rag_summarize,
+    requested_usage_month,
+    user_data,
+)
 
 
 @dataclass
 class AgentExecution:
-    """A complete agent run retained for local testing and later Ragas evaluation."""
+    """Current-run output and actual model tool calls for evaluation."""
 
     response: str
     messages: list[Any]
     tool_calls: list[dict[str, Any]]
     tool_results: list[dict[str, str]]
 
+
 def _state_modifier(state):
-    """动态切换系统提示词：检测 fill_context_for_report 调用后切换为报告提示词"""
-    global _report_mode
     messages = state.get("messages", [])
-    if messages:
-        last_msg = messages[-1]
-        if hasattr(last_msg, "name") and last_msg.name == "fill_context_for_report":
-            _report_mode = True
-        elif hasattr(last_msg, "type") and last_msg.type == "ai":
-            _report_mode = False
-    system_text = load_report_prompts() if _report_mode else load_system_prompts()
-    return [SystemMessage(content=system_text)] + state["messages"]
+    month = requested_usage_month.get()
+    system_text = (
+        load_report_prompts()
+        if month and report_mode_active(messages)
+        else load_system_prompts()
+    )
+    if month:
+        system_text += (
+            f"\n本轮已由程序验证：用户ID={current_user_id.get()}，报告月份={month}。"
+            "将用户的相对月份或简短月份回复按此月份理解。只查询并报告该月。"
+        )
+    else:
+        system_text += (
+            "\n本轮未授权生成使用报告。不得调用报告工具或生成个人使用报告；"
+            "需要使用记录时，请用户明确提出查询或报告请求并指定月份。"
+        )
+    return [SystemMessage(content=system_text)] + messages
 
 
 class ReactAgent:
-    def __init__(self):
+    def __init__(self, model=None):
         self.agent = create_react_agent(
-            model=chat_model,
-            tools=[rag_summarize,get_weather,get_user_id,get_user_location,
-                   get_current_month,fetch_external_data,fill_context_for_report],
+            model=model if model is not None else chat_model,
+            tools=[
+                rag_summarize, get_weather, get_user_id, get_user_location,
+                fetch_external_data, fill_context_for_report,
+            ],
             prompt=_state_modifier,
             checkpointer=MemorySaver(),
         )
+        self._pending_requests: dict[str, str] = {}
 
-    def execute_stream(self,query:str,thread_id:str="default",context:dict=None):
-        global _report_mode
-        _report_mode = False
-        emitted_messages: set[tuple[str, str]] = set()
-        config = {"configurable":{"thread_id":thread_id}}
-        input_dict = {
-            "messages":[
-                {"role":"user","content":query},
-            ]
-        }
-
-        for chunk in self.agent.stream(input_dict,config=config,stream_mode="values"):
-            latest_message = chunk["messages"][-1]
-            response_text = visible_assistant_text(latest_message)
-            if not response_text:
-                continue
-            message_key = (str(getattr(latest_message, "id", "")), response_text)
-            if message_key in emitted_messages:
-                continue
-            emitted_messages.add(message_key)
-            yield response_text + '\n'
+    def execute_stream(
+        self, query: str, thread_id: str = "default", context: dict | None = None
+    ):
+        """Expose only the completed answer; never stream tool or user messages."""
+        execution = self.execute_with_trace(query, thread_id, context)
+        yield execution.response + "\n"
 
     def execute_with_trace(
-        self, query: str, thread_id: str = "evaluation", context: Optional[dict] = None
+        self, query: str, thread_id: str = "evaluation", context: dict | None = None
     ) -> AgentExecution:
-        """Run once and preserve final output plus raw tool-call history.
+        """Use the same routing as the UI and trace only the current run."""
+        selected_user = str((context or {}).get("user_id") or current_user_id.get())
+        # User identity is part of the checkpoint key, even outside Streamlit.
+        conversation_key = json.dumps([selected_user, thread_id], ensure_ascii=False)
+        config = {"configurable": {"thread_id": conversation_key}}
+        route = route_personal_data_request(
+            query,
+            selected_user,
+            user_data,
+            pending_intent=self._pending_requests.get(conversation_key),
+        )
+        if route.pending_intent:
+            self._pending_requests[conversation_key] = route.pending_intent
+        else:
+            self._pending_requests.pop(conversation_key, None)
 
-        This method does not change the Streamlit streaming behavior. It is the
-        stable integration point for regression tests and Ragas agent metrics.
-        """
-        global _report_mode
-        _report_mode = False
-        config = {"configurable": {"thread_id": thread_id}}
-        result = self.agent.invoke({"messages": [{"role": "user", "content": query}]}, config=config)
+        human_message = HumanMessage(content=query, id=str(uuid4()))
+        if route.handled:
+            response = route.response or ""
+            messages = [human_message, AIMessage(content=response, id=str(uuid4()))]
+            self._remember(config, messages)
+            return AgentExecution(response, messages, [], [])
+
+        # A report must not read another month's records from conversation memory.
+        run_config = (
+            {"configurable": {"thread_id": f"{conversation_key}:report:{uuid4()}"}}
+            if route.report_month else config
+        )
+        with execution_context(selected_user, route.report_month):
+            result = self.agent.invoke({"messages": [human_message]}, config=run_config)
         messages = result["messages"]
-        tool_calls: list[dict[str, Any]] = []
-        tool_results: list[dict[str, str]] = []
-
-        for message in messages:
-            for tool_call in getattr(message, "tool_calls", None) or []:
-                tool_calls.append(
-                    {"name": tool_call.get("name", ""), "args": tool_call.get("args", {})}
-                )
-            if getattr(message, "type", None) == "tool":
-                tool_results.append(
-                    {"name": getattr(message, "name", ""), "content": str(message.content)}
-                )
-
-        response = ""
-        for message in reversed(messages):
-            if getattr(message, "type", None) == "ai" and getattr(message, "content", None):
-                response = str(message.content)
-                break
+        start = next(i for i, message in enumerate(messages) if message.id == human_message.id)
+        messages = messages[start:]
+        response = next(
+            (text for message in reversed(messages)
+             if (text := visible_assistant_text(message))),
+            "",
+        )
+        if route.report_month:
+            self._remember(
+                config,
+                [human_message, AIMessage(content=response, id=str(uuid4()))],
+            )
+        tool_calls = [
+            {"name": call.get("name", ""), "args": call.get("args", {})}
+            for message in messages
+            for call in (getattr(message, "tool_calls", None) or [])
+        ]
+        tool_results = [
+            {"name": getattr(message, "name", ""), "content": str(message.content)}
+            for message in messages if getattr(message, "type", None) == "tool"
+        ]
         return AgentExecution(response, messages, tool_calls, tool_results)
 
-if __name__ == '__main__':
+    def _remember(self, config: dict, messages: list[Any]) -> None:
+        """Save direct answers for follow-ups without invoking the model."""
+        self.agent.update_state(config, {"messages": messages}, as_node="agent")
+
+
+if __name__ == "__main__":
     agent = ReactAgent()
     for chunk in agent.execute_stream("我想查看自己的使用记录"):
-        print(chunk,end="",flush=True)
+        print(chunk, end="", flush=True)

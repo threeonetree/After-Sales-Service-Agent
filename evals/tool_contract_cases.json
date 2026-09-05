@@ -42,23 +42,21 @@
     "id": "report_without_record",
     "user_id": "1001",
     "query": "请生成我 2026-07 的扫地机器人使用报告",
-    "expected_tool_calls": [
-      {"name": "get_user_id"},
-      {"name": "fill_context_for_report"},
-      {"name": "fetch_external_data", "args": {"user_id": "1001", "month": "2026-07"}}
-    ],
-    "expected_outcome": "State that no record exists and list only returned available months; do not generate a report."
+    "expected_tool_calls": [],
+    "expected_outcome": "Deterministically state that no record exists before the model runs."
   },
   {
     "id": "report_without_month",
     "user_id": "1001",
     "query": "请生成我的扫地机器人使用报告",
-    "expected_tool_calls": [
-      {"name": "get_user_id"},
-      {"name": "get_current_month"},
-      {"name": "fill_context_for_report"},
-      {"name": "fetch_external_data"}
-    ],
-    "expected_outcome": "Use the current calendar month and do not invent a report if no record exists."
+    "expected_tool_calls": [],
+    "expected_outcome": "Ask the user to select one available month before the model runs."
+  },
+  {
+    "id": "record_current_month_without_data",
+    "user_id": "1001",
+    "query": "帮我查询本月的使用记录",
+    "expected_tool_calls": [],
+    "expected_outcome": "Deterministically state that the current month has no record and list available months."
   }
 ]

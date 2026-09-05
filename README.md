@@ -6,7 +6,10 @@ An after-sales assistant for robot vacuums built with LangGraph, Qwen, RAG, and 
 
 - Answers troubleshooting, maintenance, and product questions from a local knowledge base.
 - Uses tools for weather, user profiles, and robot usage records.
-- Generates personalized usage reports.
+- Resolves current, previous, or explicit-month record lookups deterministically,
+  without spending chat-model quota or letting the model choose another month.
+- Generates personalized reports only for one explicitly selected month that
+  has a usage record.
 - Includes tool-contract evaluations for checking tool order and required arguments.
 
 ## Project Structure
@@ -86,6 +89,55 @@ Run contract checks without calling the model:
 ```bash
 python -m evals.run_contract_evals --dry-run
 ```
+
+Install the small development-only dependency and run the offline tests:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+Pytest also collects the repository's existing `unittest.TestCase` tests, so
+both styles can coexist. Useful commands while learning:
+
+```powershell
+# Run one test file and show each case name
+python -m pytest tests/test_personal_data_route.py -v
+
+# Run one specific test method
+python -m pytest tests/test_personal_data_route.py::test_current_month_without_record_stops_before_model -v
+```
+
+The new routing tests demonstrate three pytest basics:
+
+- `@pytest.fixture`: prepares an isolated temporary CSV for each test.
+- `@pytest.mark.parametrize`: runs the same assertion for several questions.
+- Plain `assert`: compares the actual response with the expected behavior.
+
+Start with `test_current_month_without_record_stops_before_model`: its comments
+separate Arrange (prepare data), Act (call the code), and Assert (check output).
+Then read `tests/test_react_agent_routing.py`, which uses the real LangGraph
+execution with a scripted model to test tool guards, conversation memory and
+user isolation. Pytest blocks network connections during tests, so testing does
+not consume model quota or need a real API key.
+
+Personal record and report behavior:
+
+- "查询本月的使用记录" reads the selected user's current-month record directly.
+- If that month has no record, the app lists the user's available months and
+  does not generate a report.
+- "生成使用报告" asks for one month before using the chat model.
+- "生成2025年12月使用报告" enters report generation only if that record exists.
+- Multi-month reports are not supported yet; this prevents silent date-range
+  expansion and invented comparisons.
+- An ambiguous date such as "12月" asks for a full year and month. After a
+  month-selection prompt, replying "2025-12" resumes the record/report request.
+- Switching the selected user starts a new conversation. Report generation uses
+  only the approved user's month and does not read older reports as source data.
+
+For an existing installation, this routing update requires no vector-index
+rebuild or runtime dependency reinstall. Pull once, optionally install
+`requirements-dev.txt` to run pytest, then restart Streamlit.
 
 ## Notes
 
