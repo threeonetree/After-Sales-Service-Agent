@@ -27,7 +27,11 @@ class RagSummerizeService(object):
         data = self.vector_store.vector_store.get()
         texts = data.get('documents', [])
         if texts:
-            self.bm25_retriever = BM25Retriever.from_texts(texts)
+            # Keep citations when a result is found by keywords alone.
+            self.bm25_retriever = BM25Retriever.from_texts(
+                texts, metadatas=[meta or {} for meta in data.get('metadatas', [])]
+                if data.get('metadatas') else None,
+            )
             self.bm25_retriever.k = 5
         else:
             self.bm25_retriever = None

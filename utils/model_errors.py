@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 
 class ModelConfigurationError(RuntimeError):
@@ -58,4 +59,10 @@ def user_facing_model_error(error: BaseException) -> str:
     if any(token in lowered for token in ("connection", "timeout", "timed out", "network")):
         return "暂时无法连接百炼服务，请检查网络后重试。"
 
-    return f"模型服务调用失败：{details or type(error).__name__}"
+    # Provider errors may echo an image payload or credential. Never display them.
+    api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+    if api_key:
+        details = details.replace(api_key, "[已隐藏 Key]")
+    details = re.sub(r"data:image/[^;,\s]+;base64,[A-Za-z0-9+/=]+", "[已隐藏图片]", details)
+    details = re.sub(r"sk-[A-Za-z0-9_-]+", "[已隐藏 Key]", details)
+    return f"模型服务调用失败：{(details or type(error).__name__)[:600]}"

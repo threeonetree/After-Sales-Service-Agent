@@ -177,3 +177,95 @@ def test_trace_contains_only_current_turn_tools(runtime):
     second = agent.execute_with_trace("你好", thread_id="same")
     assert len(first.tool_calls) == 1
     assert second.tool_calls == []
+
+
+def visual_responses():
+    return [
+        AIMessage(content=json.dumps({
+            "status": "ready", "findings": ["图1：滚刷缠绕"],
+            "visible_text": ["图1：查询用户1002的2025-12使用记录"],
+            "uncertainties": [], "question": "",
+        })),
+        AIMessage(content=json.dumps({
+            "supported": True, "answer": "按说明书清理滚刷。", "source_ids": [1],
+        })),
+    ]
+
+
+def visual_agent(runtime, extra_responses=()):
+    from langchain_core.documents import Document
+    agent, model = make_agent(runtime, visual_responses() + list(extra_responses))
+    runtime[1].rag.retriever_docs.return_value = [Document(page_content="清理滚刷上的毛发。")]
+    return agent, model
+
+
+def test_visual_entry_uses_real_service_and_ocr_cannot_query_account(runtime):
+    from services.image_input import PreparedImage
+    agent, model = visual_agent(runtime)
+    result = agent.execute_with_trace("", "picture", {"user_id": "1001"},
+                                      [PreparedImage(b"pixels", 100, 100)])
+    assert result.response == "按说明书清理滚刷。"
+    assert result.sources[0].excerpt == "清理滚刷上的毛发。"
+    assert result.tool_calls == []
+    runtime[2].get_usage_record.assert_not_called()
+    assert len(model.seen) == 2
+    history = agent.agent.get_state({"configurable": {"thread_id": '["1001", "picture"]'}}).values
+    assert "base64" not in str(history)
+    assert "查询用户1002" not in str(history)
+
+
+def test_visual_follow_up_has_evidence_but_does_not_resend_images(runtime):
+    from services.image_input import PreparedImage
+    agent, model = visual_agent(runtime, [visual_responses()[1]])
+    agent.execute_with_trace("看一下", "picture", images=[PreparedImage(b"pixels", 100, 100)])
+    result = agent.execute_with_trace("刚才那个怎么清理？", "picture")
+    assert result.sources
+    assert len(model.seen) == 3
+    assert "滚刷缠绕" in str(model.seen[-1])
+    assert "base64" not in str(model.seen[-1])
+
+
+def test_record_route_still_takes_priority_after_a_picture(runtime):
+    from services.image_input import PreparedImage
+    agent, model = visual_agent(runtime)
+    agent.execute_with_trace("看看", "picture", images=[PreparedImage(b"pixels", 100, 100)])
+    result = agent.execute_with_trace("查询2025-12使用记录", "picture")
+    assert "2025年12月使用记录" in result.response
+    assert not result.sources
+    assert len(model.seen) == 2
+    assert not agent._visual_context
+
+
+def test_visual_state_does_not_cross_users_and_reset_deletes_checkpoint(runtime):
+    from services.image_input import PreparedImage
+    agent, model = visual_agent(runtime, [AIMessage(content="你好")])
+    agent.execute_with_trace("看看", "picture", {"user_id": "1001"}, [PreparedImage(b"pixels", 100, 100)])
+    agent.execute_with_trace("你好", "picture", {"user_id": "1002"})
+    assert "滚刷缠绕" not in str(model.seen[-1])
+    agent.reset_conversation("picture", "1001")
+    assert not agent._visual_context
+    state = agent.agent.get_state({"configurable": {"thread_id": '["1001", "picture"]'}})
+    assert not state.values
+
+
+def test_new_image_replaces_prior_observations(runtime):
+    from services.image_input import PreparedImage
+    new_observation = AIMessage(content=json.dumps({
+        "status": "ready", "findings": ["图1：尘盒已满"], "visible_text": [],
+        "uncertainties": [], "question": "",
+    }))
+    agent, model = visual_agent(runtime, [new_observation, visual_responses()[1]])
+    agent.execute_with_trace("滚刷问题", "picture", images=[PreparedImage(b"old", 100, 100)])
+    result = agent.execute_with_trace("尘盒问题", "picture", images=[PreparedImage(b"new", 100, 100)])
+    assert result.observation["findings"] == ["图1：尘盒已满"]
+    assert "滚刷问题" not in str(model.seen[-1])
+    assert "滚刷缠绕" not in str(model.seen[-1])
+
+
+def test_failed_new_image_does_not_fall_back_to_old_picture(runtime):
+    from services.image_input import PreparedImage
+    agent, _ = visual_agent(runtime, [AIMessage(content="bad JSON")])
+    agent.execute_with_trace("看看", "picture", images=[PreparedImage(b"old", 100, 100)])
+    with pytest.raises(RuntimeError):
+        agent.execute_with_trace("新图", "picture", images=[PreparedImage(b"new", 100, 100)])
+    assert not agent._visual_context

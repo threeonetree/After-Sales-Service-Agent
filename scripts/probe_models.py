@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
-from langchain_core.tools import tool
+import argparse
+from io import BytesIO
+import json
 
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
+from PIL import Image, ImageDraw
+
+from model.multimodal_options import json_model
+from services.image_input import prepare_images
 from utils.config_handler import rag_conf
 from utils.model_errors import user_facing_model_error
 
@@ -35,7 +43,36 @@ def run_tool_calling_probe(chat_model) -> None:
         raise RuntimeError("Chat model did not return the expected tool call")
 
 
+def run_vision_probe(chat_model) -> None:
+    """One opt-in call checks real pixels and JSON, not just non-empty text."""
+    picture = Image.new("RGB", (480, 240), "white")
+    draw = ImageDraw.Draw(picture)
+    draw.rectangle((20, 60, 220, 220), fill="red")
+    draw.rectangle((260, 60, 460, 220), fill="blue")
+    draw.text((190, 5), "E42", fill="black", font_size=36)
+    buffer = BytesIO()
+    picture.save(buffer, format="PNG")
+    image = prepare_images([buffer.getvalue()])[0]
+    response = json_model(chat_model, 120).invoke([HumanMessage(content=[
+        {"type": "text", "text": (
+            '请识别图片：左侧方块颜色、右侧方块颜色、顶部文字。'
+            '只输出 JSON，字段 left_color、right_color 用小写英文颜色名，code 为顶部文字。'
+        )}, image.content_block(),
+    ])])
+    try:
+        result = json.loads(response.content)
+    except (ValueError, TypeError):
+        raise RuntimeError("图片接口未返回有效 JSON。") from None
+    if result != {"left_color": "red", "right_color": "blue", "code": "E42"}:
+        raise RuntimeError("图片接口已响应，但颜色或文字识别未通过，请检查模型的视觉支持。")
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    options = parser.add_mutually_exclusive_group()
+    options.add_argument("--vision", action="store_true", help="在原有三项检查后增加一次图片检查")
+    options.add_argument("--vision-only", action="store_true", help="只检查图片输入；消耗一次聊天模型调用")
+    args = parser.parse_args()
     try:
         from model.factory import chat_model, embed_model
     except Exception as error:
@@ -47,6 +84,10 @@ def main() -> int:
         ("embedding", lambda: run_embedding_probe(embed_model)),
         ("tool_calling", lambda: run_tool_calling_probe(chat_model)),
     ]
+    if args.vision_only:
+        probes = [("vision", lambda: run_vision_probe(chat_model))]
+    elif args.vision:
+        probes.append(("vision", lambda: run_vision_probe(chat_model)))
     print(f"Chat model: {rag_conf['chat_model_name']}")
     print(f"Embedding model: {rag_conf['embedding_model_name']}")
     for name, probe in probes:
