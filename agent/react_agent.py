@@ -1,6 +1,6 @@
 """Agent entry points with deterministic personal-data routing."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from typing import Any
 from uuid import uuid4
@@ -14,6 +14,8 @@ from agent.personal_data_route import route_personal_data_request
 from agent.report_prompt_state import report_mode_active
 from model.factory import chat_model
 from utils.prompt_loader import load_system_prompts, load_report_prompts
+from services.image_input import PreparedImage, prepare_question
+from services.visual_support import KnowledgeSource, VisualContext, VisualSupportService
 from agent.tools.agent_tools import (
     current_user_id,
     execution_context,
@@ -23,6 +25,7 @@ from agent.tools.agent_tools import (
     get_user_location,
     get_weather,
     rag_summarize,
+    rag,
     requested_usage_month,
     user_data,
 )
@@ -36,6 +39,8 @@ class AgentExecution:
     messages: list[Any]
     tool_calls: list[dict[str, Any]]
     tool_results: list[dict[str, str]]
+    sources: list[KnowledgeSource] = field(default_factory=list)
+    observation: dict | None = None
 
 
 def _state_modifier(state):
@@ -60,9 +65,10 @@ def _state_modifier(state):
 
 
 class ReactAgent:
-    def __init__(self, model=None):
+    def __init__(self, model=None, visual_service=None):
+        selected_model = model if model is not None else chat_model
         self.agent = create_react_agent(
-            model=model if model is not None else chat_model,
+            model=selected_model,
             tools=[
                 rag_summarize, get_weather, get_user_id, get_user_location,
                 fetch_external_data, fill_context_for_report,
@@ -71,22 +77,36 @@ class ReactAgent:
             checkpointer=MemorySaver(),
         )
         self._pending_requests: dict[str, str] = {}
+        self._visual_context: dict[str, VisualContext] = {}
+        self.visual_service = visual_service or VisualSupportService(
+            selected_model, rag.retriever_docs
+        )
 
     def execute_stream(
-        self, query: str, thread_id: str = "default", context: dict | None = None
+        self, query: str, thread_id: str = "default", context: dict | None = None,
+        images: list[PreparedImage] | None = None,
     ):
         """Expose only the completed answer; never stream tool or user messages."""
-        execution = self.execute_with_trace(query, thread_id, context)
+        execution = self.execute_with_trace(query, thread_id, context, images)
         yield execution.response + "\n"
 
     def execute_with_trace(
-        self, query: str, thread_id: str = "evaluation", context: dict | None = None
+        self, query: str, thread_id: str = "evaluation", context: dict | None = None,
+        images: list[PreparedImage] | None = None,
     ) -> AgentExecution:
         """Use the same routing as the UI and trace only the current run."""
         selected_user = str((context or {}).get("user_id") or current_user_id.get())
         # User identity is part of the checkpoint key, even outside Streamlit.
         conversation_key = json.dumps([selected_user, thread_id], ensure_ascii=False)
         config = {"configurable": {"thread_id": conversation_key}}
+        query = prepare_question(query, bool(images))
+        if images:
+            # Never fall back to the previous picture if this new upload fails.
+            # OCR never goes through the personal-data router or account tools.
+            self._visual_context.pop(conversation_key, None)
+            self._pending_requests.pop(conversation_key, None)
+            result = self.visual_service.analyze(query, images)
+            return self._remember_visual(config, conversation_key, query, result)
         route = route_personal_data_request(
             query,
             selected_user,
@@ -100,10 +120,17 @@ class ReactAgent:
 
         human_message = HumanMessage(content=query, id=str(uuid4()))
         if route.handled:
+            self._visual_context.pop(conversation_key, None)
             response = route.response or ""
             messages = [human_message, AIMessage(content=response, id=str(uuid4()))]
             self._remember(config, messages)
             return AgentExecution(response, messages, [], [])
+
+        if route.report_month:
+            self._visual_context.pop(conversation_key, None)
+        elif conversation_key in self._visual_context:
+            result = self.visual_service.follow_up(query, self._visual_context[conversation_key])
+            return self._remember_visual(config, conversation_key, query, result)
 
         # A report must not read another month's records from conversation memory.
         run_config = (
@@ -135,6 +162,25 @@ class ReactAgent:
             for message in messages if getattr(message, "type", None) == "tool"
         ]
         return AgentExecution(response, messages, tool_calls, tool_results)
+
+    def _remember_visual(self, config, conversation_key, query, result):
+        observation = result.context.observation.model_dump()
+        # Only the final dialogue enters LangGraph; the observation is retained
+        # separately as bounded text for the dedicated visual follow-up route.
+        human = HumanMessage(content=query, id=str(uuid4()))
+        assistant = AIMessage(content=result.response, id=str(uuid4()))
+        self._remember(config, [human, assistant])
+        self._visual_context[conversation_key] = result.context
+        return AgentExecution(
+            result.response, [human, assistant], [], [], result.sources, observation
+        )
+
+    def reset_conversation(self, thread_id: str, user_id: str) -> None:
+        """Drop a closed conversation's state when starting fresh or switching user."""
+        key = json.dumps([str(user_id), thread_id], ensure_ascii=False)
+        self._pending_requests.pop(key, None)
+        self._visual_context.pop(key, None)
+        self.agent.checkpointer.delete_thread(key)
 
     def _remember(self, config: dict, messages: list[Any]) -> None:
         """Save direct answers for follow-ups without invoking the model."""
