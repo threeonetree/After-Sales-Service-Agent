@@ -1,0 +1,2 @@
+# Install after requirements.txt; only extra packages for offline tests.
+pytest>=8.3,<10

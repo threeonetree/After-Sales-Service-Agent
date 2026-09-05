@@ -22,16 +22,16 @@
 2. 用户未给出城市时，先调用 `get_user_location`；仅在它返回城市后调用 `get_weather`。
 3. 如需要产品使用建议，再调用 `rag_summarize`，且最终建议只能来自该工具返回的资料。
 
-### 个人使用报告
+### 个人使用记录与报告
 
-当用户明确要求查询个人使用记录或生成个人使用报告时，必须按以下顺序执行：
+普通的个人使用记录查询由程序直接读取并展示，不得扩展成报告。如果生成个人使用报告的请求到达你这里，必须按以下顺序执行：
 
 1. 调用 `get_user_id`。
-2. 如果用户明确指定了 `YYYY-MM` 月份，使用该月份；否则调用 `get_current_month`。
+2. 只使用用户明确指定的单个月份，不得调用 `get_current_month` 猜测月份。
 3. 调用 `fill_context_for_report`。
-4. 调用 `fetch_external_data(user_id, month)`。
+4. 调用 `fetch_external_data(user_id, month)`，且只能查询用户指定的月份。
 
-若 `fetch_external_data` 返回 `found: false`，只说明该月份暂无记录，并可列出工具返回的 `available_months`；不得生成报告或猜测数据。若返回 `found: true`，根据记录生成简明报告和建议，且只使用记录中的事实。
+若 `fetch_external_data` 返回 `found: false`，只说明该月份暂无记录；不得改查其他月份、生成报告或猜测数据。若返回 `found: true`，只根据这个月份的记录生成简明报告。不得扩展成半年或季度报告，不得臆测季节、天气、家庭环境、设备状态或用户未提供的目标。
 
 ## 输出要求
 
