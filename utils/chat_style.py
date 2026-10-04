@@ -13,6 +13,7 @@ CHAT_CSS = """
 [data-testid="stChatMessage"] h2,
 [data-testid="stChatMessage"] h3 {font-size: 1.15rem; line-height: 1.6; padding-top: .5rem;}
 [data-testid="stChatMessage"] [data-testid="stImage"] img {max-height: 220px; object-fit: contain; border-radius: 10px;}
+[role="dialog"] [data-testid="stImage"] img {max-height: 75vh; object-fit: contain;}
 [data-testid="stChatMessage"] p {line-height: 1.75;}
 [data-testid="stChatInput"] {border-radius: 14px;}
 @media (max-width: 640px) {
