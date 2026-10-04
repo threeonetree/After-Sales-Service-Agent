@@ -39,12 +39,17 @@ def test_exif_rotation_is_applied_and_metadata_removed():
         assert not normalized.getexif()
 
 
-@pytest.mark.parametrize("data,expected", [
-    (b"", "为空"), (b"not an image", "损坏"),
-    (picture("GIF"), "仅支持"), (picture()[:40], "损坏"),
-    (b"x" * (MAX_IMAGE_BYTES + 1), "5 MB"),
+@pytest.mark.parametrize("case,expected", [
+    ("empty", "为空"), ("invalid", "损坏"), ("gif", "仅支持"),
+    ("truncated", "损坏"), ("oversized", "5 MB"),
 ])
-def test_invalid_files_fail_before_any_model_call(data, expected):
+def test_invalid_files_fail_before_any_model_call(case, expected):
+    # Keep binary data out of pytest node IDs, Windows environment and Allure parameters.
+    if case == "oversized":
+        data = b"x" * (MAX_IMAGE_BYTES + 1)
+    else:
+        data = {"empty": b"", "invalid": b"not an image", "gif": picture("GIF"),
+                "truncated": picture()[:40]}[case]
     with pytest.raises(ImageInputError, match=expected):
         prepare_images([data])
 
@@ -90,8 +95,9 @@ def test_upload_count_checked_before_reading_bytes():
     files[0].getvalue.assert_not_called()
 
 
-@pytest.mark.parametrize("text", ["", "x" * 2001])
-def test_empty_or_overlong_question_rejected(text):
+@pytest.mark.parametrize("length", [0, 2001])
+def test_empty_or_overlong_question_rejected(length):
+    text = "x" * length
     with pytest.raises(ImageInputError):
         read_submission(text)
 

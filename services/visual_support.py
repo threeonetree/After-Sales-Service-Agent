@@ -37,8 +37,8 @@ ANSWER_PROMPT = """你是扫地机器人售后客服，依据提供的图片观�
 本阶段只有文字观察，没有原始图片；细节未记录时请用户重新上传，不得声称看到新细节。
 知识库是通用资料，不能冒充已经确认的品牌型号说明书。
 严禁编造报错码含义、设备检测结果、用户使用数据或保修结论。
-给出“图片中可确认什么、可能原因、可执行的排查步骤、仍需补充什么”的简洁中文答复，
-区分观察与推测，不要重复提问，不要输出长报告或一级大标题。
+先用一句话说明当前判断，必要时给出2–4条有依据的排查步骤，最后只问一个必要的补充问题。
+区分观察与推测，不要重复问题，不要输出长报告、大标题或独立的图片识别结果清单。
 维修步骤必须受真正相关的知识库片段支持。找不到相关依据时 supported=false，
 answer仅说明当前证据和需要补充的型号/报错文字/清晰照片，不给无依据的维修步骤。
 对于电池鼓包、冒烟、烧焦等风险只建议停止使用并联系售后；不要指导拆电池、带电维修。
@@ -46,7 +46,9 @@ answer仅说明当前证据和需要补充的型号/报错文字/清晰照片，
 输出 JSON 对象：{"supported":true或false,"answer":"中文答复，最多1800字",
 "source_ids":[实际支持答复的资料编号]}。
 source_ids只选提供的编号；supported=true至少选一个，false时为空列表。
-不要在answer里输出来源链接、文件路径或自编引用，来源由程序展示。"""
+answer直接面向客户，不提检索、知识库片段、JSON、模型或工具。
+不要在answer里输出来源链接、文件路径、资料编号或“参考知识片段”等引用标签。
+source_ids仅供程序内部校验，不属于客服答复。"""
 
 
 class VisualResponseError(RuntimeError):
@@ -165,8 +167,8 @@ class VisualSupportService:
                    if doc.page_content.strip()]
         if not sources:
             response = (
-                "知识库没有返回可用资料，暂时无法给出有依据的排查步骤。"
-                "请补充设备型号和完整报错文字，或检查知识库是否已入库。"
+                "现有信息还不足以确定适合这台设备的处理方法。"
+                "请补充设备型号和完整报错文字，方便进一步确认。"
             )
             cited = []
         else:
@@ -185,7 +187,7 @@ class VisualSupportService:
                 raise VisualResponseError("答复未通过知识库依据检查，请补充型号或报错文字后重试。")
             response = answer.answer.strip()
             if not answer.supported:
-                response = "暂未找到足够相关的知识库依据。\n\n" + response
+                response = "暂时还无法确认具体的处理方法。\n\n" + response
             cited = [source for source in sources if source.number in answer.source_ids]
         # Do not mutate the previous context if a provider/retrieval call failed.
         updated = VisualContext(observation, initial_question=context.initial_question,

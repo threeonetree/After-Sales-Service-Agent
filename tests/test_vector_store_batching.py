@@ -15,7 +15,7 @@ class VectorStoreBatchingTests(unittest.TestCase):
         module = importlib.import_module("rag.vector_store")
         return module.VectorStoreService
 
-    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-only"}, clear=True)
+    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-only"}, clear=False)
     def test_documents_are_sent_in_batches_of_at_most_twenty(self):
         service_class = self._load_service_class()
         service = service_class.__new__(service_class)
@@ -38,7 +38,7 @@ class VectorStoreBatchingTests(unittest.TestCase):
         )
         self.assertEqual(len(document_ids), 45)
 
-    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-only"}, clear=True)
+    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-only"}, clear=False)
     def test_partial_file_is_rolled_back_when_a_later_batch_fails(self):
         service_class = self._load_service_class()
         service = service_class.__new__(service_class)

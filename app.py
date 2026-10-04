@@ -1,44 +1,44 @@
-from dataclasses import asdict
 import uuid
 
 import streamlit as st
 
 from services.chat_input import limit_image_history, read_submission
 from services.image_input import ImageInputError, MAX_QUESTION_CHARS
-from utils.model_errors import user_facing_model_error
+from utils.app_errors import record_app_error
+from utils.chat_style import CHAT_CSS
+from utils.customer_text import customer_text
 
+st.set_page_config(page_title="扫地机器人售后助手", page_icon="💬", layout="wide")
+st.html(CHAT_CSS)
 
 try:
     from agent.react_agent import ReactAgent
 except Exception as error:
-    st.error(user_facing_model_error(error))
+    st.error(record_app_error(error))
     st.stop()
 
 
-def render_message(message):
+@st.dialog("查看图片", width="large")
+def view_picture(data, caption):
+    st.image(data, caption=caption, width="stretch")
+
+
+def render_message(message, message_index):
     with st.chat_message(message["role"]):
         if message.get("error"):
             st.error(message["content"])
             return
-        st.write(message["content"])
-        for index, data in enumerate(message.get("images", []), 1):
-            st.image(data, caption=f"图 {index}", width=320)
+        content = message["content"]
+        st.write(customer_text(content) if message["role"] == "assistant" else content)
+        pictures = message.get("images", [])
+        if pictures:
+            for index, (column, data) in enumerate(zip(st.columns(len(pictures)), pictures), 1):
+                with column:
+                    st.image(data, caption=f"图 {index}", width="stretch")
+                    if st.button("查看大图", key=f"image_{message_index}_{index}", type="tertiary"):
+                        view_picture(data, f"图 {index}")
         if message.get("images_released"):
-            st.caption("较早的图片预览已释放。若要重新看图，请再次上传。")
-        observation = message.get("observation")
-        if observation:
-            with st.expander("图片识别结果"):
-                for label, key in (("可见现象", "findings"), ("识别文字", "visible_text"),
-                                   ("仍不确定", "uncertainties")):
-                    if observation.get(key):
-                        st.write(f"**{label}**")
-                        for text in observation[key]:
-                            st.text(text)
-        if message.get("sources"):
-            with st.expander("查看知识库依据"):
-                for source in message["sources"]:
-                    st.text(f"[{source['number']}] {source['title']}")
-                    st.text(source["excerpt"])
+            st.caption("如需再次查看较早的图片，请重新上传。")
 
 
 def start_new_conversation():
@@ -51,39 +51,55 @@ def start_new_conversation():
     st.session_state["message"] = []
 
 
-st.title("扫地机器人智能客服")
-st.caption("可发送文字，或点击输入框附件按钮上传故障照片、配件照片、App 报错截图。")
-st.divider()
+def prefill_question(question):
+    st.session_state[f"chat_{st.session_state['thread_id']}"] = question
+
 
 if "agent" not in st.session_state:
     try:
         st.session_state["agent"] = ReactAgent()
     except Exception as error:
-        st.error(user_facing_model_error(error))
+        st.error(record_app_error(error))
         st.stop()
-if "message" not in st.session_state:
-    st.session_state["message"] = []
-if "thread_id" not in st.session_state:
-    st.session_state["thread_id"] = str(uuid.uuid4())
+st.session_state.setdefault("message", [])
+st.session_state.setdefault("thread_id", str(uuid.uuid4()))
 
-with st.sidebar:
-    st.subheader("用户设置")
-    selected_user = st.selectbox("选择用户ID", [str(i) for i in range(1001, 1011)])
+with st.container(key="support_header"):
+    title, user, action = st.columns([5, 2, 1.5], vertical_alignment="center")
+    with title:
+        st.subheader("扫地机器人售后助手")
+    with user:
+        selected_user = st.selectbox(
+            "选择用户", [str(i) for i in range(1001, 1011)],
+            key="user_selector", format_func=lambda value: f"用户 {value}",
+            label_visibility="collapsed",
+        )
     if st.session_state.get("selected_user") != selected_user:
         start_new_conversation()
         st.session_state["selected_user"] = selected_user
-    if st.button("新对话"):
-        start_new_conversation()
-        st.rerun()
-    st.caption("每次最多 3 张，单张不超过 5 MB，支持 JPG / PNG / WebP。")
-    st.caption("可继续追问当前图片；讨论另一台设备时建议开启新对话。")
-    st.caption("图片会发送到已配置的百炼模型进行分析。请先遮挡无关的个人信息。")
+    with action:
+        st.button("新对话", key="new_chat", on_click=start_new_conversation, width="stretch")
 
-for message in st.session_state["message"]:
-    render_message(message)
+welcome = st.empty()
+if not st.session_state["message"]:
+    with welcome.container():
+        with st.container(key="welcome"):
+            st.markdown("## 有什么可以帮你？")
+            st.write("描述使用中遇到的问题，也可以附上设备照片或报错截图。")
+            with st.container(horizontal=True):
+                for index, (label, question) in enumerate([
+                    ("清扫效果不好", "扫地机器人清扫时经常漏扫怎么办？"),
+                    ("查询使用记录", "帮我查询本月的使用记录"),
+                    ("图片怎么提问", "请帮我看看图片里的问题，应该怎么处理？"),
+                ]):
+                    st.button(label, key=f"example_{index}", on_click=prefill_question, args=(question,))
+            st.caption("图片支持 JPG / PNG / WebP，每次最多 3 张，单张不超过 5 MB。")
+
+for index, message in enumerate(st.session_state["message"]):
+    render_message(message, index)
 
 value = st.chat_input(
-    "请输入问题或上传图片",
+    "输入问题，或点 + 上传图片（最多 3 张）",
     key=f"chat_{st.session_state['thread_id']}",
     accept_file="multiple",
     file_type=["jpg", "jpeg", "png", "webp"],
@@ -97,28 +113,25 @@ if value:
     except ImageInputError as error:
         st.error(str(error))
         st.stop()
-
+    welcome.empty()
     user_message = {
         "role": "user", "content": submission.question,
         "images": [image.data for image in submission.images],
     }
     st.session_state["message"].append(user_message)
     limit_image_history(st.session_state["message"])
-    render_message(user_message)
+    render_message(user_message, len(st.session_state["message"]) - 1)
     try:
-        with st.spinner("智能客服正在分析问题、查询资料…"):
+        with st.spinner("正在整理建议…"):
             execution = st.session_state["agent"].execute_with_trace(
                 submission.question,
                 thread_id=st.session_state["thread_id"],
                 context={"user_id": selected_user},
                 images=submission.images,
             )
-        answer = {
-            "role": "assistant", "content": execution.response,
-            "sources": [asdict(source) for source in execution.sources],
-            "observation": execution.observation,
-        }
+        # Sources and observations remain in AgentExecution for internal checks.
+        answer = {"role": "assistant", "content": customer_text(execution.response)}
     except Exception as error:
-        answer = {"role": "assistant", "content": user_facing_model_error(error), "error": True}
+        answer = {"role": "assistant", "content": record_app_error(error), "error": True}
     st.session_state["message"].append(answer)
-    render_message(answer)
+    render_message(answer, len(st.session_state["message"]) - 1)

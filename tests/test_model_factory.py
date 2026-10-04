@@ -15,7 +15,7 @@ class ModelFactoryTests(unittest.TestCase):
             "DASHSCOPE_API_KEY": "test-only",
             "DASHSCOPE_BASE_URL": "https://example.invalid/compatible-mode/v1",
         },
-        clear=True,
+        clear=False,
     )
     def test_chat_uses_openai_compatible_endpoint(self):
         factory = importlib.import_module("model.factory")
@@ -33,7 +33,7 @@ class ModelFactoryTests(unittest.TestCase):
             "qwen3.7-text-embedding",
         )
 
-    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-only"}, clear=True)
+    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-only"}, clear=False)
     def test_mainland_endpoint_is_the_default(self):
         factory = importlib.import_module("model.factory")
 

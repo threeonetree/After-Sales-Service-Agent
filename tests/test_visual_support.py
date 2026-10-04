@@ -72,7 +72,8 @@ def test_empty_ready_observation_is_treated_as_insufficient():
 def test_no_documents_does_not_make_up_repair_steps_or_call_model_again():
     service, model, _ = make_service(OBSERVATION, documents=[])
     result = service.analyze("看看", IMAGES)
-    assert "没有返回可用资料" in result.response
+    assert "还不足以确定" in result.response
+    assert "知识库" not in result.response
     assert not result.sources
     assert model.invoke.call_count == 1
 
@@ -82,7 +83,8 @@ def test_retrieved_but_irrelevant_documents_are_not_cited():
         "supported": False, "answer": "请补充型号以核实 E42 的含义。", "source_ids": [],
     })
     result = service.analyze("看看", IMAGES)
-    assert "暂未找到足够相关" in result.response
+    assert "还无法确认" in result.response
+    assert "知识库" not in result.response
     assert not result.sources
 
 
@@ -144,7 +146,7 @@ def test_real_chat_client_serializes_bailian_vision_options():
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import HumanMessage
     from model.multimodal_options import json_model
-    with patch.dict("os.environ", {}, clear=True):
+    with patch.dict("os.environ", {}, clear=False):
         model = ChatOpenAI(model="qwen3.7-flash-2026-07-15", api_key="test-only",
                            base_url="https://example.invalid/compatible-mode/v1")
     bound = json_model(model, 1400)
