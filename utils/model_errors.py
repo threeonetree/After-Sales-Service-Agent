@@ -37,6 +37,16 @@ def _exception_text(error: BaseException) -> str:
     return " ".join(parts)
 
 
+def redact_diagnostics(details: str) -> str:
+    """Shared by CLI messages and app logs; never emit keys or encoded images."""
+    for name in ("DASHSCOPE_API_KEY", "OPENAI_API_KEY"):
+        api_key = os.getenv(name, "").strip()
+        if api_key:
+            details = details.replace(api_key, "[已隐藏 Key]")
+    details = re.sub(r"data:image/[^;,\s]+;base64,[A-Za-z0-9+/=]+", "[已隐藏图片]", details)
+    return re.sub(r"sk-[A-Za-z0-9_-]+", "[已隐藏 Key]", details)
+
+
 def user_facing_model_error(error: BaseException) -> str:
     """Translate common failures without leaking credentials or stack traces."""
     details = _exception_text(error)
@@ -60,9 +70,5 @@ def user_facing_model_error(error: BaseException) -> str:
         return "暂时无法连接百炼服务，请检查网络后重试。"
 
     # Provider errors may echo an image payload or credential. Never display them.
-    api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
-    if api_key:
-        details = details.replace(api_key, "[已隐藏 Key]")
-    details = re.sub(r"data:image/[^;,\s]+;base64,[A-Za-z0-9+/=]+", "[已隐藏图片]", details)
-    details = re.sub(r"sk-[A-Za-z0-9_-]+", "[已隐藏 Key]", details)
+    details = redact_diagnostics(details)
     return f"模型服务调用失败：{(details or type(error).__name__)[:600]}"

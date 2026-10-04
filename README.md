@@ -6,7 +6,7 @@ An after-sales assistant for robot vacuums built with LangGraph, Qwen, RAG, and 
 
 - Answers troubleshooting, maintenance, and product questions from a local knowledge base.
 - Accepts robot photos and App error screenshots alongside text; extracts visual
-  observations, searches the existing text knowledge base, and displays cited passages.
+  observations, searches the existing text knowledge base, and returns customer-facing advice.
 - Supports image follow-ups with bounded text context and isolated conversations.
 - Uses tools for weather, user profiles, and robot usage records.
 - Resolves current, previous, or explicit-month record lookups deterministically,
@@ -154,7 +154,7 @@ For an existing installation, follow the multimodal update steps below.
 1. 校验上传的实际文件内容，纠正手机照片方向、移除 EXIF、缩小图片。
 2. 视觉模型读取照片或截图，提取可见现象、能确认的报错文字和不确定项。
 3. 把提问和图片观察组成文字查询，复用现有向量检索 + BM25 检索。
-4. 用同一个聊天模型结合资料生成中文排查建议，页面展示实际采用的资料片段。
+4. 用同一个聊天模型结合资料生成中文排查建议，内部校验实际采用的资料编号。
 
 例如：滚刷照片 + “为什么扫不干净” → “滚刷可见毛发缠绕” →
 检索文本里的滚刷维护内容 → 给出有资料支持的清理建议。
@@ -167,8 +167,8 @@ PDF 知识库可以继续使用，尚不对知识库 PDF 内嵌的图片建立�
   每张最多 5 MB、2000 万像素；发送前最长边缩小至 1600 像素。
 - 支持仅图片提问，也支持“照片 + 问题”，例如“这处缠绕会影响清扫吗？”
   或“截图上的报错是什么意思？型号是……”。多图会按图1、图2、图3分析。
-- 可展开“图片识别结果”核对现象和文字，展开“查看知识库依据”检查参考片段。
-  引用编号由程序核验，只展示模型实际选择的已检索资料；引用存在不等于
+- 页面面向客户，只展示答复及用户上传的图片，不展示识别清单、检索片段或内部编号。
+  观察和来源仍保留在 Agent 执行结果中，用于内部校验与测试；引用存在不等于
   每项判断都已被事实验证，仍需结合型号和原始资料检查答复。
 - 看不清或不相关的图片会先要求补充信息。没有相关知识依据时，应明确说明
   依据不足，不能把通用问答资料冒充特定型号的故障码说明书。
@@ -203,13 +203,13 @@ cd D:\Pycharmfile\DLtest\machine
 .\.venv\Scripts\Activate.ps1
 git pull --ff-only origin main
 python -m pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest -q
-python -m scripts.probe_models --vision-only
+python -m scripts.run_tests
 python -m streamlit run app.py
 ```
 
 不需要重新创建 `.venv`、更改 Key 或重建现有向量库。
-依赖安装会复用已满足版本要求的包；本次明确声明了图片处理和 JSON 校验依赖。
+依赖安装会复用已满足版本要求的包；本次只新增 Allure 测试依赖；已安装运行依赖的用户可仅安装 `requirements-dev.txt`。
+已有视觉自检成功结果无需重复调用；仅在变更模型配置或排查视觉接口时再运行自检。
 若 `git pull` 提示本地修改冲突，先保留本地修改再处理，不要直接覆盖。
 
 `--vision-only` 用一张程序生成的色块和文字图片检查模型是否真正识别图片、
@@ -230,7 +230,7 @@ python -m pytest tests/test_image_input.py tests/test_visual_support.py -v
 python -m pytest tests/test_multimodal_app.py -v
 ```
 
-页面测试覆盖上传后预览、仅图片发送、来源展示、用户切换、失败提示及刷新不重复请求；
+页面测试覆盖上传后预览、仅图片发送、内部信息隐藏、用户切换、失败提示及刷新不重复请求；
 文件上传值通过 Streamlit 的返回对象注入，不包含浏览器文件选择器的端到端测试。
 Agent 测试使用真实 LangGraph 和模拟模型，覆盖看图、追问、新旧图片隔离和原有查询回归。
 
@@ -238,7 +238,7 @@ Agent 测试使用真实 LangGraph 和模拟模型，覆盖看图、追问、新
 
 | 输入 | 应检查的结果 |
 | --- | --- |
-| 滚刷缠绕照片 + “怎么清理？” | 正确指出可见缠绕；建议与展示的滚刷资料相符 |
+| 滚刷缠绕照片 + “怎么清理？” | 正确指出可见缠绕；建议与知识库里的滚刷资料相符 |
 | 清晰 App 报错截图 | 报错文字抄录准确；未知代码不会被编造解释 |
 | 两张设备不同角度照片 | 图号与内容对应，不把不同画面合并成不存在的故障 |
 | 仅上传图片 | 能开始分析或提出具体补充问题 |
@@ -248,6 +248,23 @@ Agent 测试使用真实 LangGraph 和模拟模型，覆盖看图、追问、新
 | 新对话或切换用户后问“刚才图片呢？” | 不带入上一段对话的图片观察 |
 
 这些人工检查验证实际识别与检索质量，不能用离线单元测试的通过数代替。
+
+## 客服页面与测试报告
+
+顶部保留用户下拉框（1001–1010）和“新对话”，当前没有登录鉴权，用户下拉框用于演示切换，
+不能作为面向公网的账号访问控制。切换会清空当前对话和图片上下文。
+页面采用集中聊天布局、并排缩略图和“查看大图”，示例问题只填入输入框，不自动发送。
+报错显示简短提示及问题编号；维护人员按编号查看 `logs/support_YYYYMMDD.log`。
+
+[测试、Allure 页面安装与 error 定位教程](docs/testing.md)包括 Windows 一次安装步骤和单用例调试示例。
+
+```powershell
+# 不需要 Java：执行测试，保存日志和 Allure 原始结果
+python -m scripts.run_tests
+
+# 装好 Java 和 Allure 2 后：执行测试并打开结果页面
+python -m scripts.run_tests --open-report
+```
 
 ## Notes
 

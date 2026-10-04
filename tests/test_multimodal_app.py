@@ -35,16 +35,17 @@ def test_text_chat_sources_rerun_and_new_conversation(app_runtime):
     app.chat_input[0].set_value("你好").run()
     assert not app.exception
     assert [message["content"] for message in app.session_state["message"]] == ["你好", "先检查滚刷。"]
-    assert len(app.expander) == 2
+    assert len(app.expander) == 0
+    assert not app.sidebar.selectbox
     assert agent.execute_with_trace.call_args.kwargs["images"] == []
     app.run()
     assert agent.execute_with_trace.call_count == 1  # UI reruns do not spend quota.
-    app.button[0].click().run()
+    app.button(key="new_chat").click().run()
     assert not app.session_state["message"]
     agent.reset_conversation.assert_called_once()
 
 
-def test_image_only_submission_renders_preview_and_sources(app_runtime, monkeypatch):
+def test_image_only_submission_shows_preview_without_internal_evidence(app_runtime, monkeypatch):
     import streamlit as st
     from streamlit.elements.widgets.chat import ChatInputValue
     image = BytesIO()
@@ -59,7 +60,9 @@ def test_image_only_submission_renders_preview_and_sources(app_runtime, monkeypa
     assert app.session_state["message"][0]["images"]
     assert len(app.image) == 1
     assert app.image[0].captions == ["图 1"]
-    assert app.session_state["message"][1]["sources"][0]["title"].startswith("手册")
+    assert "sources" not in app.session_state["message"][1]
+    assert "observation" not in app.session_state["message"][1]
+    assert not app.expander
 
 
 def test_bad_image_never_calls_agent(app_runtime, monkeypatch):
@@ -93,3 +96,36 @@ def test_user_switch_clears_history(app_runtime):
     assert not app.exception
     assert not app.session_state["message"]
     assert agent.reset_conversation.call_args.args[1] == "1001"
+
+
+def test_examples_prefill_without_sending_and_welcome_disappears(app_runtime):
+    app, agent = app_runtime
+    app.run().button(key="example_0").click().run()
+    assert not app.exception
+    agent.execute_with_trace.assert_not_called()
+    assert app.chat_input[0].value == "扫地机器人清扫时经常漏扫怎么办？"
+    app.chat_input[0].set_value("怎么清理滚刷？").run()
+    assert not app.exception
+    assert not any("有什么可以帮你" in text.value for text in app.markdown)
+
+
+def test_internal_citations_and_raw_errors_never_reach_customer(app_runtime):
+    app, agent = app_runtime
+    agent.execute_with_trace.return_value.response = "先清理滚刷（参考知识片段1-12，3-25）。"
+    app.run().chat_input[0].set_value("滚刷缠绕").run()
+    assert app.session_state["message"][-1]["content"] == "先清理滚刷。"
+    agent.execute_with_trace.side_effect = RuntimeError("private-provider-detail sk-secret")
+    app.chat_input[0].set_value("再看一下").run()
+    assert "问题编号" in app.error[0].value
+    assert "private-provider-detail" not in app.error[0].value
+    assert "sk-secret" not in app.error[0].value
+
+
+def test_new_user_request_uses_new_identity_and_thread(app_runtime):
+    app, agent = app_runtime
+    app.run().chat_input[0].set_value("你好").run()
+    first_thread = agent.execute_with_trace.call_args.kwargs["thread_id"]
+    app.selectbox[0].select("1002").run()
+    app.chat_input[0].set_value("本月记录").run()
+    assert agent.execute_with_trace.call_args.kwargs["context"] == {"user_id": "1002"}
+    assert agent.execute_with_trace.call_args.kwargs["thread_id"] != first_thread

@@ -10,12 +10,12 @@ from utils.model_errors import (
 
 
 class ModelErrorTests(unittest.TestCase):
-    @patch.dict(os.environ, {}, clear=True)
+    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": ""}, clear=False)
     def test_missing_key_is_rejected(self):
         with self.assertRaises(ModelConfigurationError):
             require_dashscope_api_key()
 
-    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-only"}, clear=True)
+    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-only"}, clear=False)
     def test_key_is_read_without_transformation(self):
         self.assertEqual(require_dashscope_api_key(), "test-only")
 
