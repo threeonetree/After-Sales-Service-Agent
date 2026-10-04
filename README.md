@@ -1,273 +1,168 @@
-# After-Sales Service Agent
+# After-Sales-Service-Agent
 
-An after-sales assistant for robot vacuums built with LangGraph, Qwen, RAG, and Streamlit.
+**支持文字与图片问答的扫地机器人智能售后助手。**
 
-## Features
+[![Offline regression](https://github.com/threeonetree/After-Sales-Service-Agent/actions/workflows/tests.yml/badge.svg)](https://github.com/threeonetree/After-Sales-Service-Agent/actions/workflows/tests.yml)
 
-- Answers troubleshooting, maintenance, and product questions from a local knowledge base.
-- Accepts robot photos and App error screenshots alongside text; extracts visual
-  observations, searches the existing text knowledge base, and returns customer-facing advice.
-- Supports image follow-ups with bounded text context and isolated conversations.
-- Uses tools for weather, user profiles, and robot usage records.
-- Resolves current, previous, or explicit-month record lookups deterministically,
-  without spending chat-model quota or letting the model choose another month.
-- Generates personalized reports only for one explicitly selected month that
-  has a usage record.
-- Includes tool-contract evaluations for checking tool order and required arguments.
+基于 LangGraph、Qwen 和 RAG 构建。用户可以描述故障、上传设备照片或 App 报错截图，
+由助手结合售后知识库给出排查建议，也可以查询使用记录、生成单月使用报告。
 
-## Project Structure
+应用在本机运行，通过阿里云百炼调用模型，无需独立显卡或本地部署大模型。
 
-- `agent/`: LangGraph ReAct agent and tools.
-- `rag/`: Chroma-based knowledge retrieval.
-- `services/`: weather and user-data services.
-- `prompts/`: system and report prompts.
-- `evals/`: tool-contract cases and evaluation runner.
-- `app.py`: Streamlit application entry point.
+## 功能
 
-## Model configuration
+| 功能 | 使用方式 |
+| --- | --- |
+| 知识库问答 | 询问清扫故障、配件维护、保养方法和产品选购问题 |
+| 图片辅助排查 | 上传设备、配件照片或报错截图，结合文字描述获取建议 |
+| 多轮追问 | 在当前对话中继续补充现象、反馈已尝试的步骤 |
+| 使用记录查询 | 查询本月、上月或指定月份；没有记录时提示可查询的月份 |
+| 单月使用报告 | 根据已有记录生成指定月份的使用情况与保养建议 |
+| 用户切换 | 从下拉框选择演示用户，切换时清空当前对话和图片上下文 |
 
-The application calls Alibaba Cloud Model Studio only; it does not run a local
-model and has no paid-model fallback.
+图片支持 JPG、PNG、WebP，每次最多 3 张，单张不超过 5 MB。页面提供缩略图和放大查看，
+回答直接面向客户，不展示内部识别清单或检索过程。
 
-- Chat: `qwen3.7-flash-2026-07-15`
-- Embedding: `qwen3.7-text-embedding`
-- Credential: one shared `DASHSCOPE_API_KEY`
-- Chat protocol: Bailian's OpenAI-compatible multimodal endpoint
-- Embedding integration: `DashScopeEmbeddings`
+## 快速开始
 
-Keep "stop when free quota is exhausted" enabled for both models. When Bailian
-returns `403 AllocationQuota.FreeTierOnly`, the UI shows a quota-exhausted
-message and stops the request.
+### 1. 准备环境
 
-## Windows 10 setup
+- Python 3.10 或以上版本，以及 Git。
+- 一个可调用所配置聊天模型与 Embedding 模型的百炼 API Key。
+- 能连接模型服务的网络环境。
 
-Python 3.10 or newer is supported. The example below uses Python 3.10 in
-PowerShell:
+克隆项目：
+
+```bash
+git clone https://github.com/threeonetree/After-Sales-Service-Agent.git
+cd After-Sales-Service-Agent
+```
+
+以下以 **Windows PowerShell + Python 3.10** 为例。已有合适的虚拟环境时，直接激活使用即可。
 
 ```powershell
 py -3.10 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Use the `DASHSCOPE_API_KEY` already configured in Windows, or copy
-`.env.example` to `.env` and replace the placeholder locally. Never commit the
-real key.
+<details>
+<summary>Linux / macOS 安装命令</summary>
 
-The default chat endpoint is the mainland China endpoint. If the API Key belongs
-to another Bailian region, set `DASHSCOPE_BASE_URL` to that region's
-OpenAI-compatible `/compatible-mode/v1` endpoint as well.
-
-Run three small live checks for chat, text embeddings, and tool calling:
-
-```powershell
-python -m scripts.probe_models
-```
-
-Expected result:
-
-```text
-[PASS] chat
-[PASS] embedding
-[PASS] tool_calling
-```
-
-The repository does not commit generated Chroma data. Build the local knowledge
-index once after first install or whenever the embedding model changes:
-
-```powershell
-python -m rag.rebuild_index --yes
-```
-
-This command replaces only the generated `chroma_db` index; it keeps all source
-files under `data/`. Start the application after the index is ready:
-
-```powershell
-streamlit run app.py
-```
-
-Run contract checks without calling the model:
+确保 `python3` 为 Python 3.10 或以上版本：
 
 ```bash
-python -m evals.run_contract_evals --dry-run
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-Install the small development-only dependency and run the offline tests:
+</details>
 
-```powershell
-python -m pip install -r requirements-dev.txt
-python -m pytest -q
+### 2. 配置模型
+
+在系统环境变量中设置 `DASHSCOPE_API_KEY`，或将 [.env.example](.env.example)
+复制为项目根目录的 `.env`，填入自己的 Key：
+
+```dotenv
+DASHSCOPE_API_KEY=你的百炼_API_Key
 ```
 
-Pytest also collects the repository's existing `unittest.TestCase` tests, so
-both styles can coexist. Useful commands while learning:
+不要将真实 Key 提交到仓库。模型名称在 [config/rag.yml](config/rag.yml) 中配置：
 
-```powershell
-# Run one test file and show each case name
-python -m pytest tests/test_personal_data_route.py -v
+| 用途 | 默认模型 |
+| --- | --- |
+| 对话、图片理解与报告生成 | `qwen3.7-flash-2026-07-15` |
+| 文本向量化与知识检索 | `qwen3.7-text-embedding` |
 
-# Run one specific test method
-python -m pytest tests/test_personal_data_route.py::test_current_month_without_record_stops_before_model -v
-```
+两个模型共用一个 Key。默认使用百炼中国内地服务配置；更换模型或接入地址前，
+请先确认账号可用模型及其能力，详见[开发文档](docs/开发.md)。
 
-The new routing tests demonstrate three pytest basics:
+若仅使用免费额度，请在百炼控制台为**两个模型分别开启“免费额度用完即停”**。
+知识库初始化和模型调用都会消耗账户额度，剩余额度及有效期以控制台为准。
+应用不自动切换到其他模型继续服务。
 
-- `@pytest.fixture`: prepares an isolated temporary CSV for each test.
-- `@pytest.mark.parametrize`: runs the same assertion for several questions.
-- Plain `assert`: compares the actual response with the expected behavior.
+### 3. 初始化知识库并启动
 
-Start with `test_current_month_without_record_stops_before_model`: its comments
-separate Arrange (prepare data), Act (call the code), and Assert (check output).
-Then read `tests/test_react_agent_routing.py`, which uses the real LangGraph
-execution with a scripted model to test tool guards, conversation memory and
-user isolation. Pytest blocks network connections during tests, so testing does
-not consume model quota or need a real API key.
+仓库已附带示例知识资料。首次运行时创建本地索引，然后启动页面：
 
-Personal record and report behavior:
-
-- "查询本月的使用记录" reads the selected user's current-month record directly.
-- If that month has no record, the app lists the user's available months and
-  does not generate a report.
-- "生成使用报告" asks for one month before using the chat model.
-- "生成2025年12月使用报告" enters report generation only if that record exists.
-- Multi-month reports are not supported yet; this prevents silent date-range
-  expansion and invented comparisons.
-- An ambiguous date such as "12月" asks for a full year and month. After a
-  month-selection prompt, replying "2025-12" resumes the record/report request.
-- Switching the selected user starts a new conversation. Report generation uses
-  only the approved user's month and does not read older reports as source data.
-
-For an existing installation, follow the multimodal update steps below.
-
-## 多模态售后：文字 + 图片
-
-使用现有 `qwen3.7-flash-2026-07-15` 理解图片并生成答复，继续用
-`qwen3.7-text-embedding` 和 `DashScopeEmbeddings` 检索知识库。
-一个已有的 `DASHSCOPE_API_KEY` 即可，不部署本地 AI、不新增模型服务。
-该 Flash 快照的图片输入及结构化输出能力见
-[百炼模型说明](https://help.aliyun.com/zh/model-studio/qwen3-7-flash)，图片通过
-[OpenAI 兼容接口的 Base64 输入](https://help.aliyun.com/zh/model-studio/vision)发送。
-
-### 图片如何使用现有文本知识库
-
-1. 校验上传的实际文件内容，纠正手机照片方向、移除 EXIF、缩小图片。
-2. 视觉模型读取照片或截图，提取可见现象、能确认的报错文字和不确定项。
-3. 把提问和图片观察组成文字查询，复用现有向量检索 + BM25 检索。
-4. 用同一个聊天模型结合资料生成中文排查建议，内部校验实际采用的资料编号。
-
-例如：滚刷照片 + “为什么扫不干净” → “滚刷可见毛发缠绕” →
-检索文本里的滚刷维护内容 → 给出有资料支持的清理建议。
-这属于**视觉理解 + 文本 RAG**。图片不会写入 Chroma；当前 TXT 和能提取文字的
-PDF 知识库可以继续使用，尚不对知识库 PDF 内嵌的图片建立图像索引。
-
-### 使用方式与边界
-
-- 在聊天输入框点击附件按钮，可同时上传 1–3 张 JPG / PNG / WebP 静态图片。
-  每张最多 5 MB、2000 万像素；发送前最长边缩小至 1600 像素。
-- 支持仅图片提问，也支持“照片 + 问题”，例如“这处缠绕会影响清扫吗？”
-  或“截图上的报错是什么意思？型号是……”。多图会按图1、图2、图3分析。
-- 页面面向客户，只展示答复及用户上传的图片，不展示识别清单、检索片段或内部编号。
-  观察和来源仍保留在 Agent 执行结果中，用于内部校验与测试；引用存在不等于
-  每项判断都已被事实验证，仍需结合型号和原始资料检查答复。
-- 看不清或不相关的图片会先要求补充信息。没有相关知识依据时，应明确说明
-  依据不足，不能把通用问答资料冒充特定型号的故障码说明书。
-- 围绕当前图片的文字追问使用图片观察、最初的问题及最近两轮问答，不重复发送原图。
-  若需要查看之前未描述的细节，请重新上传。新上传替换上一组图片的观察；
-  新图分析失败时不会自动沿用旧图。
-- 查询使用记录、生成报告继续走原来的月份/用户校验流程，并结束当前图片追问。
-  图片内的账号或月份不会触发个人记录查询。
-- “新对话”和切换用户会清空当前对话及图片上下文。页面只保留最近三组图片预览；
-  应用没有把图片写入磁盘或向量库。图片会发送到配置的百炼服务，请先遮挡无关信息。
-- 本版输入范围是文字和静态图片，输出为文字；语音、视频和自动创建维修工单尚未接入。
-
-### 免费额度与失败行为
-
-请继续为聊天模型和 Embedding 模型分别开启“免费额度用完即停”。
-一次正常图片问答通常包含 **2 次聊天模型调用 + 1 次查询文本向量化**；
-图片追问通常为 **1 次聊天模型调用 + 1 次查询向量化**。
-模糊/无关图片通常在第一步停止；检索无资料时不调用第二次聊天模型。
-这不是永久无限免费服务，能否继续运行取决于账户的剩余额度和有效期。
-
-程序限制图片数量、尺寸及模型输出长度；畸形或截断 JSON 会提示重试，不自动
-增加一次模型调用来修复。额度错误、网络错误或服务错误会结束当前请求，
-不切换其他模型。SDK 原有的瞬时故障重试策略仍保留，实际请求数可能因此增加。
-页面刷新不会重新提交已完成的图片问题。
-
-### 已有项目的一次更新（Windows PowerShell）
-
-先在运行 Streamlit 的终端按 `Ctrl+C`。在项目目录使用已有 `.venv`：
-
-```powershell
-cd D:\Pycharmfile\DLtest\machine
-.\.venv\Scripts\Activate.ps1
-git pull --ff-only origin main
-python -m pip install -r requirements.txt -r requirements-dev.txt
-python -m scripts.run_tests
+```bash
+python -m rag.rebuild_index --yes
 python -m streamlit run app.py
 ```
 
-不需要重新创建 `.venv`、更改 Key 或重建现有向量库。
-依赖安装会复用已满足版本要求的包；本次只新增 Allure 测试依赖；已安装运行依赖的用户可仅安装 `requirements-dev.txt`。
-已有视觉自检成功结果无需重复调用；仅在变更模型配置或排查视觉接口时再运行自检。
-若 `git pull` 提示本地修改冲突，先保留本地修改再处理，不要直接覆盖。
+在浏览器打开终端显示的地址，默认是 **http://localhost:8501**。
+以后启动只需激活原虚拟环境，再执行 `python -m streamlit run app.py`。
 
-`--vision-only` 用一张程序生成的色块和文字图片检查模型是否真正识别图片、
-以及 JSON 接口是否可用，只进行一次聊天模型检查，成功时输出 `[PASS] vision`。
-它会使用真实 API 和免费额度。原来的 `python -m scripts.probe_models` 仍只跑
-聊天、Embedding、工具调用三项；加 `--vision` 则运行全部四项。
-图片自检仅验证视觉接口，不等同于售后答案准确率测试。
+索引重建命令会替换生成的 `chroma_db/`，保留 `data/` 中的源文件；无需每次启动都重建。
 
-### 自动测试与人工验收
+## 试着这样提问
 
-所有 pytest 测试阻止网络连接，不需要 Key，也不消耗模型额度。
+在页面顶部选择用户后，可以直接发送文字，或点击输入框的附件按钮上传图片。
 
-```powershell
-# 图片校验、图片到知识库流程：适合先读这些测试学习 fixture / 参数化 / Mock
-python -m pytest tests/test_image_input.py tests/test_visual_support.py -v
-
-# 真正运行 Streamlit 页面，使用模拟 Agent 回答
-python -m pytest tests/test_multimodal_app.py -v
-```
-
-页面测试覆盖上传后预览、仅图片发送、内部信息隐藏、用户切换、失败提示及刷新不重复请求；
-文件上传值通过 Streamlit 的返回对象注入，不包含浏览器文件选择器的端到端测试。
-Agent 测试使用真实 LangGraph 和模拟模型，覆盖看图、追问、新旧图片隔离和原有查询回归。
-
-连接真实模型后，用自己的照片完成以下验收：
-
-| 输入 | 应检查的结果 |
+| 场景 | 示例 |
 | --- | --- |
-| 滚刷缠绕照片 + “怎么清理？” | 正确指出可见缠绕；建议与知识库里的滚刷资料相符 |
-| 清晰 App 报错截图 | 报错文字抄录准确；未知代码不会被编造解释 |
-| 两张设备不同角度照片 | 图号与内容对应，不把不同画面合并成不存在的故障 |
-| 仅上传图片 | 能开始分析或提出具体补充问题 |
-| 模糊图片或无关图片 | 要求补拍/说明，不给肯定的故障诊断 |
-| “已经清理了，接下来呢？” | 沿用当前现象和已做步骤，不声称看到新的图片细节 |
-| 看图后查询本月使用记录 | 按当前用户和本月查询，不生成跨月份报告 |
-| 新对话或切换用户后问“刚才图片呢？” | 不带入上一段对话的图片观察 |
+| 常见故障 | “扫地机器人清扫时经常漏扫怎么办？” |
+| 照片排查 | 上传滚刷照片：“这处缠绕会影响清扫吗？应该怎么处理？” |
+| 报错截图 | 上传 App 截图：“这个报错是什么意思？设备型号是……” |
+| 继续追问 | “已经清理了，接下来呢？” |
+| 查询记录 | “查询 2025 年 12 月的使用记录” |
+| 生成报告 | “生成 2025 年 12 月的使用报告” |
 
-这些人工检查验证实际识别与检索质量，不能用离线单元测试的通过数代替。
+用户资料和使用记录来自 [data/external/](data/external/) 中的演示数据，未连接真实设备。
+查询“本月”时若没有记录，助手会列出已有月份；生成报告需要选定一个有记录的月份。
+讨论另一台设备或开始新的问题时，点击“新对话”即可。
 
-## 客服页面与测试报告
+## 使用自己的知识资料
 
-顶部保留用户下拉框（1001–1010）和“新对话”，当前没有登录鉴权，用户下拉框用于演示切换，
-不能作为面向公网的账号访问控制。切换会清空当前对话和图片上下文。
-页面采用集中聊天布局、并排缩略图和“查看大图”，示例问题只填入输入框，不自动发送。
-报错显示简短提示及问题编号；维护人员按编号查看 `logs/support_YYYYMMDD.log`。
+将 TXT 或可提取文字的 PDF 文件放入 `data/`，重新运行：
 
-[测试、Allure 页面安装与 error 定位教程](docs/testing.md)包括 Windows 一次安装步骤和单用例调试示例。
-
-```powershell
-# 不需要 Java：执行测试，保存日志和 Allure 原始结果
-python -m scripts.run_tests
-
-# 装好 Java 和 Allure 2 后：执行测试并打开结果页面
-python -m scripts.run_tests --open-report
+```bash
+python -m rag.rebuild_index --yes
 ```
 
-## Notes
+完成后重启应用。分块和检索配置见 [config/chroma.yml](config/chroma.yml)。
 
-Do not commit API keys, local vector databases, logs, or evaluation outputs.
-An index manifest stored inside `chroma_db/` prevents vectors from different
-embedding models from being mixed.
+图片问答会先提取照片中的可见现象和文字，再检索这些文本资料，最后生成答复。
+因此现有文本知识库可以直接用于图片辅助排查；当前不会对 PDF 内嵌图片建立图像索引。
+
+## 技术栈与目录
+
+| 模块 | 实现 |
+| --- | --- |
+| 聊天界面 | Streamlit |
+| Agent 与工具调用 | LangGraph、LangChain |
+| 图片理解与文本生成 | Qwen，百炼 OpenAI 兼容接口 |
+| 知识检索 | Chroma 向量检索 + BM25，RRF 融合排序 |
+| 文本向量化 | DashScopeEmbeddings |
+| 自动测试 | pytest、Allure、GitHub Actions |
+
+| 路径 | 内容 |
+| --- | --- |
+| [app.py](app.py) | 页面入口 |
+| [agent/](agent/) | Agent、工具与记录查询路由 |
+| [services/](services/) | 图片处理、视觉问答与数据服务 |
+| [rag/](rag/) | 知识库入库与检索 |
+| [config/](config/)、[prompts/](prompts/) | 配置与提示词 |
+| [data/](data/) | 示例知识资料和用户数据 |
+| [tests/](tests/)、[evals/](evals/) | 自动测试与工具契约评估 |
+| [docs/](docs/) | 开发说明、测试及排错指南 |
+
+## 测试与更多文档
+
+运行不调用真实模型的离线测试：
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m scripts.run_tests
+```
+
+- [开发文档](docs/开发.md)：实现原理、模型自检、配置细节与人工验收。
+- [测试与 Allure 指南](docs/testing.md)：报告安装、查看失败用例与错误定位。
+- [工具契约评估](evals/README.md)：Agent 工具调用的检查方法。
+
+## 当前范围
+
+本项目用于多模态售后场景的学习与演示。用户下拉框用于切换演示数据，尚未接入登录鉴权。
+目前支持文字和静态图片输入、文字回答及单月报告；语音、视频、真实设备接入和维修工单尚未实现。
+图片判断和建议的质量取决于照片清晰度、模型能力及知识资料的覆盖范围。
